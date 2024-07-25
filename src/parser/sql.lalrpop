@@ -1,0 +1,292 @@
+use std::str::FromStr;
+use crate::parser::token::{TokenKind, LexicalError};
+use crate::ast;
+
+grammar<'input>;
+
+extern {
+    type Location = usize;
+    type Error = LexicalError;
+
+    enum TokenKind<'input> {
+        IDENT => TokenKind::Ident(<&'input str>),
+        QuotedString => TokenKind::QuotedString(<&'input str>),
+        LiteralInteger => TokenKind::LiteralInteger(<i64>),
+        LiteralFloat => TokenKind::LiteralFloat(<&'input str>),
+        "=" => TokenKind::Eq,
+        "!=" => TokenKind::NotEq,
+        "<" => TokenKind::Lt,
+        ">" => TokenKind::Gt,
+        "<=" => TokenKind::LtEq,
+        ">=" => TokenKind::GtEq,
+        "+" => TokenKind::Plus,
+        "-" => TokenKind::Minus,
+        "*" => TokenKind::Multiply,
+        "/" => TokenKind::Divide,
+        "//" => TokenKind::IntDiv,
+        "%" => TokenKind::Modulo,
+        "||" => TokenKind::StringConcat,
+        "(" => TokenKind::LParen,
+        ")" => TokenKind::RParen,
+        "," => TokenKind::Comma,
+        ";" => TokenKind::SemiColon,
+        "." => TokenKind::Dot,
+        "AND" => TokenKind::AND,
+        "AS" => TokenKind::AS,
+        "ASC" => TokenKind::ASC,
+        "BOOLEAN" => TokenKind::BOOLEAN,
+        "BY" => TokenKind::BY,
+        "CREATE" => TokenKind::CREATE,
+        "CROSS" => TokenKind::CROSS,
+        "DELETE" => TokenKind::DELETE,
+        "DESC" => TokenKind::DESC,
+        "DISTINCT" => TokenKind::DISTINCT,
+        "DROP" => TokenKind::DROP,
+        "EXCEPT" => TokenKind::EXCEPT,
+        "EXCLUDE" => TokenKind::EXCLUDE,
+        "EXISTS" => TokenKind::EXISTS,
+        "FALSE" => TokenKind::FALSE,
+        "FLOAT" => TokenKind::FLOAT,
+        "FROM" => TokenKind::FROM,
+        "FULL" => TokenKind::FULL,
+        "GROUP" => TokenKind::GROUP,
+        "HAVING" => TokenKind::HAVING,
+        "IN" => TokenKind::IN,
+        "INNER" => TokenKind::INNER,
+        "INSERT" => TokenKind::INSERT,
+        "INT" => TokenKind::INT,
+        "INTO" => TokenKind::INTO,
+        "IS" => TokenKind::IS,
+        "JOIN" => TokenKind::JOIN,
+        "LEFT" => TokenKind::LEFT,
+        "LIKE" => TokenKind::LIKE,
+        "LIMIT" => TokenKind::LIMIT,
+        "NOT" => TokenKind::NOT,
+        "NULL" => TokenKind::NULL,
+        "OFFSET" => TokenKind::OFFSET,
+        "ON" => TokenKind::ON,
+        "OR" => TokenKind::OR,
+        "ORDER" => TokenKind::ORDER,
+        "OUTER" => TokenKind::OUTER,
+        "OVER" => TokenKind::OVER,
+        "PARTITION" => TokenKind::PARTITION,
+        "RECURSIVE" => TokenKind::RECURSIVE,
+        "RIGHT" => TokenKind::RIGHT,
+        "SELECT" => TokenKind::SELECT,
+        "SET" => TokenKind::SET,
+        "TEXT" => TokenKind::TEXT,
+        "TABLE" => TokenKind::TABLE,
+        "TRUE" => TokenKind::TRUE,
+        "UPDATE" => TokenKind::UPDATE,
+        "VALUES" => TokenKind::VALUES,
+        "WHERE" => TokenKind::WHERE,
+        "WINDOW" => TokenKind::WINDOW,
+        "WITH" => TokenKind::WITH,
+        "FIRST" => TokenKind::FIRST,
+        "LAST" => TokenKind::LAST,
+    }
+}
+
+pub Sql: Vec<ast::SqlStmt> = {
+    <mut stmts:Statements> => stmts
+};
+
+Statements: Vec<ast::SqlStmt> = {
+    => vec![],
+    <mut stmts:(oneSql OptionalSeparator)+>  => {
+        let mut res : Vec<ast::SqlStmt> = stmts.into_iter().map(|elt| elt.0).collect();
+        res
+    },
+};
+
+OptionalSeparator: () = {
+    ";"? => (),
+};
+
+oneSql: ast::SqlStmt = {
+    CreateTable => <>,
+    Select => <>
+};
+
+Comma<T>: Vec<T> = {
+    <mut v:(<T> ",")*> <e:T?> => match e {
+        None => v,
+        Some(e) => {
+            v.push(e);
+            v
+        }
+    }
+};
+
+// Define the create table statement
+CreateTable: ast::SqlStmt = {
+    "CREATE" "TABLE" <table:IDENT> "(" <fields:Comma<FieldDefinition>> ")" => ast::SqlStmt::CreateTable(ast::CreateTableStmt {
+        table: table.to_string(),
+        columns: fields,
+    })
+};
+
+// Define a single field definition
+FieldDefinition: ast::ColumnDef = {
+    <name:IDENT> <ty:SqlType> => ast::ColumnDef {
+        name: name.to_string(),
+        col_type: ty,
+    }
+};
+
+// Define the list of fields in the select statement
+_AS_Statement: String = {
+    "AS"? <field:IDENT> => field.to_string()
+};
+
+// Define a single field in the select statement
+SelectField: ast::SelectedColumnDef = {
+    "*" => {
+        ast::SelectedColumnDef {
+            name: String::from("*"),
+            distinct: false,
+            alias: None,
+        }
+    },
+    <is_distinct:"DISTINCT"?> <field:IDENT> <alias:_AS_Statement?> => {
+        ast::SelectedColumnDef {
+            name: field.to_string(),
+            distinct: is_distinct.is_some(),
+            alias: alias,
+        }
+    }
+};
+
+SelectFieldList: Vec<ast::SelectedColumnDef> = Comma<SelectField>;
+
+// Define the select statement
+Select: ast::SqlStmt = {
+    "SELECT" <fields:SelectFieldList> "FROM" <table:IDENT> <where_clause:WhereClause?> => 
+    ast::SqlStmt::Select(ast::SelectStmt {
+        columns: fields,
+        table: table.to_string(),
+        where_clause: where_clause,
+    })
+};
+
+// Define SQL data types
+SqlType: ast::SqlType = {
+    "INT" => ast::SqlType::Integer,
+    "TEXT" => ast::SqlType::Text,
+    "FLOAT" => ast::SqlType::Float,
+    "BOOLEAN" => ast::SqlType::Boolean
+};
+
+// Define WHERE clause
+WhereClause: ast::SqlExpr = {
+    "WHERE" <expr:Expr> => expr
+};
+
+// Define expressions with proper precedence and associativity
+Expr: ast::SqlExpr = {
+    Expr_Or
+};
+
+Expr_Or: ast::SqlExpr = {
+    <left:Expr_And> "OR" <right:Expr_Or> => ast::SqlExpr::BinaryOp {
+        left: Box::new(left),
+        op: ast::SqlBinaryOperator::Or,
+        right: Box::new(right),
+    },
+    Expr_And => <>
+};
+
+Expr_And: ast::SqlExpr = {
+    <left:Expr_Cmp> "AND" <right:Expr_And> => ast::SqlExpr::BinaryOp {
+        left: Box::new(left),
+        op: ast::SqlBinaryOperator::And,
+        right: Box::new(right),
+    },
+    Expr_Cmp => <>
+};
+
+Expr_Cmp: ast::SqlExpr = {
+    <left:Expr_Add> <op:CmpOp> <right:Expr_Cmp> => ast::SqlExpr::BinaryOp {
+        left: Box::new(left),
+        op: op,
+        right: Box::new(right),
+    },
+    Expr_Add => <>
+};
+
+CmpOp: ast::SqlBinaryOperator = {
+    "=" => ast::SqlBinaryOperator::Eq,
+    "!=" => ast::SqlBinaryOperator::Ne,
+    "<" => ast::SqlBinaryOperator::Lt,
+    "<=" => ast::SqlBinaryOperator::Le,
+    ">" => ast::SqlBinaryOperator::Gt,
+    ">=" => ast::SqlBinaryOperator::Ge
+};
+
+Expr_Add: ast::SqlExpr = {
+    <left:Expr_Mul> "+" <right:Expr_Add> => ast::SqlExpr::BinaryOp {
+        left: Box::new(left),
+        op: ast::SqlBinaryOperator::Add,
+        right: Box::new(right),
+    },
+    <left:Expr_Mul> "-" <right:Expr_Add> => ast::SqlExpr::BinaryOp {
+        left: Box::new(left),
+        op: ast::SqlBinaryOperator::Sub,
+        right: Box::new(right),
+    },
+    Expr_Mul => <>
+};
+
+Expr_Mul: ast::SqlExpr = {
+    <left:Expr_Unary> "*" <right:Expr_Mul> => ast::SqlExpr::BinaryOp {
+        left: Box::new(left),
+        op: ast::SqlBinaryOperator::Mul,
+        right: Box::new(right),
+    },
+    <left:Expr_Unary> "/" <right:Expr_Mul> => ast::SqlExpr::BinaryOp {
+        left: Box::new(left),
+        op: ast::SqlBinaryOperator::Div,
+        right: Box::new(right),
+    },
+    <left:Expr_Unary> "%" <right:Expr_Mul> => ast::SqlExpr::BinaryOp {
+        left: Box::new(left),
+        op: ast::SqlBinaryOperator::Mod,
+        right: Box::new(right),
+    },
+    Expr_Unary => <>
+};
+
+Expr_Unary: ast::SqlExpr = {
+    "-" <expr:Expr_Unary> => ast::SqlExpr::UnaryOp {
+        op: ast::SqlUnaryOperator::Neg,
+        expr: Box::new(expr),
+    },
+    Expr_Item => <>
+};
+
+// Define single expression items
+Expr_Item: ast::SqlExpr = {
+    <ident:IDENT> => ast::SqlExpr::Column(ident.to_string()),
+    <literal:Literal> => ast::SqlExpr::Value(literal)
+};
+
+// Define literals
+Literal: ast::SqlValue = {
+    <int:LiteralInteger> => ast::SqlValue::Integer(int),
+    <float:LiteralFloat> => ast::SqlValue::Float(float.trim().parse::<f64>().unwrap()),
+    <string:QuotedString> => ast::SqlValue::String(string.to_string()),
+    "TRUE" => ast::SqlValue::Boolean(true),
+    "FALSE" => ast::SqlValue::Boolean(false),
+    "NULL" => ast::SqlValue::Null
+};
+
+// Helper to handle separated elements
+SeparatedBy<T, S>: Vec<T> = {
+    <mut v:(<T> <S>)*> <e:T?> => match e {
+        None => v,
+        Some(e) => {
+            v.push(e);
+            v
+        }
+    }
+};
